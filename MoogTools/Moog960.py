@@ -205,7 +205,7 @@ class ObservedPhrase( Phrase ):
     def __init__(self, observedData = [], Melody=None, ID=None):
         wlStart = observedData[0].header.get('WLSTART')
         wlStop = observedData[0].header.get('WLSTOP')
-        super(ObservedPhrase, self).__init__(wlStart, wlStop)
+        super(ObservedPhrase, self).__init__(wlStart, wlStop, ID=ID)
 
         self.observedData = observedData
         #self.observedLabels = observedLabels
@@ -238,14 +238,14 @@ class ObservedPhrase( Phrase ):
     def listen(self):
         return self.observedData
         
-    def record(self, filename = None):
-        self.save(filename=filename)
+    def record(self, filename = None, dI=False):
+        self.save(filename=filename, dI=dI)
 
-    def save(self, filename = None):
+    def save(self, filename = None, dI=False):
         HDUs = []
         for spectrum in self.observedData:
             hdr = spectrum.header.copy()
-            spectrum.preserve(continuum=False, V=False)
+            spectrum.preserve(continuum=False, V=False, dI=dI)
             SpectrumHDU = pyfits.BinTableHDU.from_columns(spectrum.columns, header=hdr)
             SpectrumHDU.name = "%.4fA - %.4fA OBSERVED" % (hdr.get('wlStart'), 
                     hdr.get('wlStop'))
@@ -336,7 +336,10 @@ class SyntheticPhrase( Phrase ):
         ID = ''.join(random.choice(string.ascii_letters) for _ in range(10))
         parameters["PHRASE"] = ID
         parameters["MELODY"] = Melody.ID
-        parameters["SCORE"] = Melody.Score.ID
+        try:
+            parameters["SCORE"] = Melody.Score.ID
+        except:
+            parameters["SCORE"] = 1
         if sourceType =="RAW":
             rawData = []
             rawData.append(SpectralTools.Spectrum.from_file(hdr,data=data,
@@ -942,7 +945,12 @@ class ObservedMelody( Melody ):
         super(ObservedMelody, self).__init__(phrases=phrases, filename=filename, 
                 label=label, header=header, Score=Score)
         if len(self.phrases) == 0:
-            self.loadMelody()
+            if filename != None:
+                self.loadMelody()
+            else:
+                self.phrases = []
+                self.nPhrases = 0
+
 
     @classmethod
     def fromFile(self, filename=None, label=None, Score=None):
@@ -992,6 +1000,12 @@ class ObservedMelody( Melody ):
                     parameters=parameters, Melody=self))
 
 
+        self.nPhrases = len(self.phrases)
+
+    def addPhrase(self, phrase = None):
+        parameters = {}
+        parameters["SELECTED"] = True
+        self.phrases.append(phrase)
         self.nPhrases = len(self.phrases)
 
     def loadData(self):
@@ -1062,10 +1076,16 @@ class SyntheticMelody( Melody ):
         if self.contents == None:
             self.contents = "RAW"
         parameters = {}
-        parameters["LABEL"] = "T = %dK log g = %.1f B = %.2f kG" % (self.Teff, self.logg, self.B)
-        parameters["TEFF"] = self.Teff
-        parameters["LOGG"] = self.logg
-        parameters["BFIELD"] = self.B
+        try:
+            parameters["LABEL"] = "T = %dK log g = %.1f B = %.2f kG" % (self.Teff, self.logg, self.B)
+            parameters["TEFF"] = self.Teff
+            parameters["LOGG"] = self.logg
+            parameters["BFIELD"] = self.B
+        except:
+            parameters["LABEL"] = "Synthetic Spectrum"
+            parameters["TEFF"] = 0
+            parameters["LOGG"] = 0
+            parameters["BFIELD"] = 0
         parameters["SELECTED"] = False
 
         for i in range(nSpectra):
@@ -1317,9 +1337,9 @@ class Score( object ):
         keys = ["TEFF", "LOGG", "BFIELD"]
         for key in keys:
             params[key] = []
-        for raw in self.raw_labels:
-            for key in raw.keys():
-                params[key].append(raw[key])
+        for raw in self.getLabels(keySignature='RAW'):
+            for key in keys:
+                params[key].append(raw.parameters[key])
         for key in params.keys():
             self.rawGridPoints[key] = numpy.unique(params[key])
 
@@ -1329,9 +1349,9 @@ class Score( object ):
         keys = ["TEFF", "LOGG", "BFIELD"]
         for key in keys:
             params[key] = []
-        for interpolated in self.interpolated_labels:
-            for key in interpolated.keys():
-                params[key].append(interpolated[key])
+        for interpolated in self.getLabels(keySignature="INTERPOLATED"):
+            for key in keys:
+                params[key].append(interpolated.parameters[key])
         for key in params.keys():
             self.interpolatedGridPoints[key] = numpy.unique(params[key])
 
@@ -1341,9 +1361,9 @@ class Score( object ):
         keys = ["TEFF", "LOGG", "BFIELD"]
         for key in keys:
             params[key] = []
-        for integrated in self.integrated_labels:
-            for key in integrated.keys():
-                params[key].append(integrated[key])
+        for integrated in self.getLabels(keySignature="INTEGRATED"):
+            for key in keys:
+                params[key].append(integrated.parameters[key])
         for key in params.keys():
             self.integratedGridPoints[key] = numpy.unique(params[key])
 
@@ -1375,6 +1395,36 @@ class Score( object ):
 
     def getLabels(self, keySignature='CONVOLVED', selected=False):
         retval = []
+        if keySignature == 'RAW':
+            for melody in self.raw_labels.keys():
+                for phrase in self.raw_labels[melody].keys():
+                    for raw in self.raw_labels[melody][phrase]:
+                        if selected:
+                            if raw.parameters["SELECTED"]:
+                                retval.append(raw)
+                        else:
+                            retval.append(raw)
+
+        if keySignature == 'INTERPOLATED':
+            for melody in self.interpolated_labels.keys():
+                for phrase in self.interpolated_labels[melody].keys():
+                    for interpolated in self.interpolated_labels[melody][phrase]:
+                        if selected:
+                            if interpolated.parameters["SELECTED"]:
+                                retval.append(interpolated)
+                        else:
+                            retval.append(interpolated)
+
+        if keySignature == 'INTEGRATED':
+            for melody in self.integrated_labels.keys():
+                for phrase in self.integrated_labels[melody].keys():
+                    for integrated in self.integrated_labels[melody][phrase]:
+                        if selected:
+                            if integrated.parameters["SELECTED"]:
+                                retval.append(integrated)
+                        else:
+                            retval.append(integrated)
+
         if keySignature == 'CONVOLVED':
             for melody in self.convolved_labels.keys():
                 for phrase in self.convolved_labels[melody].keys():
@@ -1398,14 +1448,50 @@ class Score( object ):
         return retval
 
     def appendLabel(self, label=None, keySignature='CONVOLVED'):
+        if keySignature == 'RAW':
+            self.raw_labels[label.parameters["MELODY"]][label.parameters["PHRASE"]].append(label)
+        if keySignature == 'INTEGRATED':
+            self.integrated_labels[label.parameters["MELODY"]][label.parameters["PHRASE"]].append(label)
+        if keySignature == 'INTERPOLATED':
+            self.interpolated_labels[label.parameters["MELODY"]][label.parameters["PHRASE"]].append(label)
         if keySignature == 'CONVOLVED':
             self.convolved_labels[label.parameters["MELODY"]][label.parameters["PHRASE"]].append(label)
+        if keySignature == 'OBSERVED':
+            self.observed_labels[label.parameters["MELODY"]][label.parameters["PHRASE"]].append(label)
 
     def selectMelodies(self, wlRange=[], exact=False, keySignature='CONVOLVED'):
+        if keySignature=='RAW':
+            for melody in self.raw_labels.keys():
+                for labels in self.raw_labels[melody].keys():
+                    for label in self.raw_labels[melody][labels]:
+                        label.parameters["SELECTED"] = label.Phrase.inWlRange(wlStart=wlRange[0], 
+                                                       wlStop=wlRange[1], exact=exact)
+
+        if keySignature=='INTERPOLATED':
+            for melody in self.interpolated_labels.keys():
+                for labels in self.interpolated_labels[melody].keys():
+                    for label in self.interpolated_labels[melody][labels]:
+                        label.parameters["SELECTED"] = label.Phrase.inWlRange(wlStart=wlRange[0], 
+                                                       wlStop=wlRange[1], exact=exact)
+
+        if keySignature=='INTEGRATED':
+            for melody in self.integrated_labels.keys():
+                for labels in self.integrated_labels[melody].keys():
+                    for label in self.integrated_labels[melody][labels]:
+                        label.parameters["SELECTED"] = label.Phrase.inWlRange(wlStart=wlRange[0], 
+                                                       wlStop=wlRange[1], exact=exact)
+
         if keySignature=='CONVOLVED':
             for melody in self.convolved_labels.keys():
                 for labels in self.convolved_labels[melody].keys():
                     for label in self.convolved_labels[melody][labels]:
+                        label.parameters["SELECTED"] = label.Phrase.inWlRange(wlStart=wlRange[0], 
+                                                       wlStop=wlRange[1], exact=exact)
+
+        if keySignature=='OBSERVEDED':
+            for melody in self.observed_labels.keys():
+                for labels in self.observed_labels[melody].keys():
+                    for label in self.observed_labels[melody][labels]:
                         label.parameters["SELECTED"] = label.Phrase.inWlRange(wlStart=wlRange[0], 
                                                        wlStop=wlRange[1], exact=exact)
 
@@ -1416,37 +1502,6 @@ class Score( object ):
                 label.parameters["SELECTED"] = False
         for selected in selectedLabels:
             selected.parameters["SELECTED"] = True
-        """
-        for melody in self.syntheticMelodies:
-            for phrase in numpy.array(melody.phrases)[numpy.array(melody.selectedPhrases) == True]:
-                if keySignature == 'RAW':
-                    for raw in self.raw_labels:
-                        if raw in selectedLabels:
-                            raw.parameters["SELECTED"] = True
-                        else:
-                            raw.parameters["SELECTED"] = False
-
-                if keySignature == 'INTERPOLATED':
-                    for interpolated in self.interpolated_labels:
-                        if interpolated in selectedLabels:
-                            interpolated.parameters["SELECTED"] = True
-                        else:
-                            interpolated.parameters["SELECTED"] = False
-
-                if keySignature == 'INTEGRATED':
-                    for integrated in self.integrated_labels:
-                        if integrated in selectedLabels:
-                            integrated.parameters["SELECTED"] = True
-                        else:
-                            integrated.parameters["SELECTED"] = False
-                
-                if keySignature == 'CONVOLVED':
-                    for convolved in self.convolved_labels:
-                        if convolved in selectedLabels:
-                            convolved.parameters["SELECTED"] = True
-                        else:
-                            convolved.parameters["SELECTED"] = False
-        #"""
 
     def addToEnsemble(self, selectedLabels = [], keySignature='CONVOLVED'):
         if keySignature == 'RAW':
@@ -1520,47 +1575,6 @@ class Score( object ):
                 if len(spectrum) > 0:
                     spectra.append(spectrum)
                     parameters.append(params)
-            """
-            for phrase in numpy.array(melody.phrases)[numpy.array(melody.selectedPhrases)==True]:
-                if keySignature == "INTERPOLATED":
-                    for interpolated in phrase.interpolatedLabels:
-                        if interpolated in selectedLabels:
-                            sp, p = melody.perform(interpolated,
-                                keySignature=keySignature)
-                            spectra.append(sp)
-                            params.append(p)
-                            labels.append(interpolated)
-
-                if keySignature == "INTEGRATED":
-                    for integrated in phrase.integratedLabels:
-                        if integrated in selectedLabels:
-                            sp, p = melody.perform(integrated,
-                                    keySignature=keySignature)
-                            spectra.append(sp)
-                            params.append(p)
-                            labels.append(integrated)
-
-                if keySignature == "CONVOLVED":
-                    for convolved in self.parent.convolved_labels:
-                        if convolved.parameters["SELECTED"]:
-                            if convolved in selectedLabels:
-                                sp, p = melody.perform(convolved,
-                                        keySignature=keySignature)
-                                spectrum.append(sp)
-                                params.append(p)
-                                labels.append(convolved)
-
-                if keySignature == "MERGED":
-                    for merged in phrase.mergedLabels:
-                        if merged.parameters["SELECTED"]:
-                            if merged in mergedLabels:
-                                sp, p = melody.perform(merged,
-                                        keySignature=keySignature)
-                                spectrum.append(sp)
-                                params.append(p)
-                                labels.append(merged)
-            #"""
-
         else:
             for label in selectedLabels:
                 if label.parameters["SELECTED"]:
@@ -1595,10 +1609,13 @@ class Score( object ):
 
         mergedLabel.parameters["SELECTED"] = True
         mergedLabel.addReference(Spectrum = mergedSpectra)
-        #if keySignature=='OBSERVED':
-        #    newPhrase = ObservedPhrase(observedData=[mergedSpectra], Melody=self)
-        #    self.Score.appendLabel(mergedLabel)#convolved_labels.append(mergedLabel)
-        #    self.addPhrases(phrases = [newPhrase])
+        if keySignature=='OBSERVED':
+            newPhrase = ObservedPhrase(observedData=[mergedSpectra], Melody=self)
+            mergedLabel.addReference(Phrase=newPhrase)
+            mergedLabel.addReference(Score=self)
+            self.appendLabel(mergedLabel, keySignature=keySignature)#convolved_labels.append(mergedLabel)
+            #self.addPhrases(phrases = [newPhrase])
+        #blended = SyntheticMelody(phrases=phrases, header=header, Score=self)
         #compositeSpectrum = spectra[0]
         #compositeLabel = label[0].copy()
         #for sp in spectrum[1:]:
@@ -1607,37 +1624,37 @@ class Score( object ):
 
         return mergedSpectra, mergedLabel
 
-                
-        
-            #self.compositeObserved.append(compositeSpectrum)
-        #return self.compositeObserved, label
-        return spectra, labels
-
-    def record(self, selected=[], basename=''):
+    def record(self, selected=[], filename='', keySignature='CONVOLVED', dI = False):
+        """
         for melody in self.syntheticMelodies:
             if not(melody.muted):
                 for i in range(len(melody.label)-1):
                     if melody.label[i+1] in selected:
                         melody.record(melody.label[i+1], basename=basename)
+        #"""
+        if len(selected) > 0:
+            for label in selected:
+               label.Phrase.record(filename=filename)
+        else:
+            if keySignature == 'OBSERVED':
+                for label in self.getLabels(keySignature=keySignature):
+                    label.Phrase.record(filename=filename, dI=dI)
+            if keySignature == 'CONVOLVED':
+                for label in self.getLabels(keySignature=keySignature):
+                    label.Phrase.record(filename=filename)
+            
 
     def master(self, selectedLabels=[], keySignature='CONVOLVED'):
         """
            Moog960::SyntheticMelody::master()
            This routine merges all phrases into a single master phrase
         """
-        #compositePhrase = SpectralTools.Spectrum()
-        #self.selectMelodies(selectAll=True)
-        #self.selectEnsemble(selectedLabels=selectedLabels, keySignature=keySignature)
         mastered = []
         for synthetic in self.syntheticMelodies:
             mastered.append(synthetic.master(keySignature=keySignature))
             mastered[-1].parameters["SELECTED"] = True
 
         return mastered
-
-        #self.getMelodyParams(retLabels=False)
-        #spectra, parameters, labels = self.perform(selectedLabels=selectedLabels, 
-        #        keySignature='CONVOLVED')
 
 
     def blend(self, desiredParameters={}):
@@ -1794,19 +1811,19 @@ class Score( object ):
 
         phrases = []
         for sp, p in zip(interpolatedSpectrum, interpolatedParams):
-            p.addReference(sp)
-            self.appendLabel(label=p, keySignature='CONVOLVED')
+            p.addReference(Spectrum=sp, Score=self)
             phrases.append(SyntheticPhrase(convolvedData=[sp], diskInt='BEACHBALL'))
+            #self.appendLabel(label=p, keySignature='CONVOLVED')
         header=pyfits.Header()
         for key in desiredParameters.keys():
             header.set(key, desiredParameters[key])
         header.set("SPECTRUM_CONTENTS", "CONVOLVED")
         blended = SyntheticMelody(phrases=phrases, header=header, Score=self)
-        #blended.selectPhrases(selectAll=True)
-        #print len(interpolatedParams)
-        #raw_input()
-        #self.selectMelodies(selectAll=True)
+        for p in interpolatedParams:
+            p.addReference(Melody=blended)
+            self.appendLabel(label=p, keySignature='CONVOLVED')
 
+        self.syntheticMelodies.append(blended)
         return blended, interpolatedParams
 
 class Moog960( object ):
