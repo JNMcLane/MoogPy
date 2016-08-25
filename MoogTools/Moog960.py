@@ -1843,14 +1843,23 @@ class Score( object ):
         #print "Difference Finished!"
         lnlike = -0.5*numpy.sum( 
                   (difference/self.compositeObservedLabel.Spectrum).flux_I**2.0)
+<<<<<<< HEAD
         print "ln_likelihood Finished!"
         #print lnlike
+=======
+        #print "ln_likelihood Finished!"
+        print lnlike
+>>>>>>> upstream/master
         if ax != None:
             ax.clear()
             blendedLabels[0].Spectrum.plot(ax=ax)
             self.compositeObservedLabel.Spectrum.plot(ax=ax)
             ax.figure.show()
             raw_input()
+
+        del(difference)
+        del(blendedLabels[0])
+        del(blended)
         return lnlike
 
 class Moog960( object ):
